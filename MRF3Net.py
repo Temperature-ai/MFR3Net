@@ -2,25 +2,25 @@ import torch
 import torch.nn as nn
 
 
-class VaNet(nn.Module):
+class MRF3Net(nn.Module):
     def __init__(self, num_classes=21, Train=False):
-        super(VaNet, self).__init__()
+        super(MRF3Net, self).__init__()
         self.Train = Train
         base_channel = 64
         self.Backbone_0 = Vanila_Conv_no_pool(1, base_channel // 2, 3)
         self.Backbone_1 = Vanila_Conv(base_channel // 2, base_channel, 3)
         self.Backbone_2 = Vanila_Conv(base_channel, base_channel * 2, 3)
 
-        self.FPM_0 = FPM(base_channel // 2)
-        self.FPM_1 = FPM(base_channel)
-        self.FPM_2 = FPM(base_channel * 2)
+        self.MPE_0 = MPE(base_channel // 2)
+        self.MPE_1 = MPE(base_channel)
+        self.MPE_2 = MPE(base_channel * 2)
 
-        self.B_fusion_1 = B_fusion(base_channel // 2, base_channel)
-        self.B_fusion_2 = B_fusion(base_channel, base_channel * 2)
+        self.FFE_1 = FFE(base_channel // 2, base_channel)
+        self.FFE_2 = FFE(base_channel, base_channel * 2)
 
-        self.FRM_2 = FFM(base_channel * 2, base_channel * 2, base_channel)
-        self.FRM_1 = FFM(base_channel, base_channel, base_channel // 2)
-        self.FRM_final = FFM_final(base_channel // 2, base_channel // 2, base_channel // 2)
+        self.FFD_2 = FFD(base_channel * 2, base_channel * 2, base_channel)
+        self.FFD_1 = FFD(base_channel, base_channel, base_channel // 2)
+        self.FFD_final = FFD_final(base_channel // 2, base_channel // 2, base_channel // 2)
 
         self.final = nn.Sequential(
             Vanila_Conv_no_pool(base_channel // 2, base_channel // 4, 3),
@@ -36,19 +36,19 @@ class VaNet(nn.Module):
     def forward(self, inputs):
 
         spatial_low_0 = self.Backbone_0(inputs)
-        FPM_0 = self.FPM_0(spatial_low_0)
+        FPM_0 = self.MPE_0(spatial_low_0)
 
         spatial_low_1 = self.Backbone_1(FPM_0)
-        spatial_low_1_0 = self.B_fusion_1(spatial_low_0, spatial_low_1)
-        FPM_1 = self.FPM_1(spatial_low_1_0)
+        spatial_low_1_0 = self.FFE_1(spatial_low_0, spatial_low_1)
+        FPM_1 = self.MPE_1(spatial_low_1_0)
 
         spatial_low_2 = self.Backbone_2(FPM_1)
-        spatial_low_2_0 = self.B_fusion_2(spatial_low_1, spatial_low_2)
-        FPM_2 = self.FPM_2(spatial_low_2_0)
+        spatial_low_2_0 = self.FFE_2(spatial_low_1, spatial_low_2)
+        FPM_2 = self.MPE_2(spatial_low_2_0)
 
-        RM_feature_2 = self.FRM_2(spatial_low_2, FPM_2)
-        RM_feature_1 = self.FRM_1(FPM_1, RM_feature_2)
-        RM_feature = self.FRM_final(FPM_0, RM_feature_1)
+        RM_feature_2 = self.FFD_2(spatial_low_2, FPM_2)
+        RM_feature_1 = self.FFD_1(FPM_1, RM_feature_2)
+        RM_feature = self.FFD_final(FPM_0, RM_feature_1)
         
         final = self.final(RM_feature)
         if self.Train:
@@ -167,9 +167,9 @@ class SE_Block(nn.Module):
         return x * y.expand_as(x)
 
 
-class B_fusion(nn.Module):
+class FFE(nn.Module):
     def __init__(self, inchannel_low, inchannel_high, ratio=16):
-        super(B_fusion, self).__init__()
+        super(FFE, self).__init__()
         self.downsample = Cut(inchannel_low, inchannel_low)
 
         self.conv_block = nn.Sequential(
@@ -217,9 +217,9 @@ class Cut(nn.Module):
         return x
 
 
-class FFM(nn.Module):
+class FFD(nn.Module):
     def __init__(self, in_spatial_low, in_spatial_high, in_prior):
-        super(FFM, self).__init__()
+        super(FFD, self).__init__()
         self.conv_block_low = nn.Sequential(
             Vanila_Conv_no_pool(in_spatial_low, in_spatial_low // 16, 1),
             nn.Conv2d(in_spatial_low // 16, 1, 1, padding=0),
@@ -276,9 +276,9 @@ class FFM(nn.Module):
         return out
 
 
-class FFM_final(nn.Module):
+class FFD_final(nn.Module):
     def __init__(self, in_spatial_low, in_spatial_high, in_prior):
-        super(FFM_final, self).__init__()
+        super(FFD_final, self).__init__()
         self.conv_block_low = nn.Sequential(
             Vanila_Conv_no_pool(in_spatial_low, in_spatial_low // 16, 3),
             nn.Conv2d(in_spatial_low // 16, 1, 1, padding=0),
@@ -334,9 +334,9 @@ class FFM_final(nn.Module):
         return out
 
 
-class FPM(nn.Module):
+class MPE(nn.Module):
     def __init__(self, in_channel):
-        super(FPM, self).__init__()
+        super(MPE, self).__init__()
         self.Conv_1 = nn.Sequential(
             nn.Conv2d(in_channel // 4, in_channel // 4, 1, 1, padding=0),
             nn.BatchNorm2d(in_channel // 4),
@@ -398,22 +398,3 @@ class seg_head(nn.Module):
         return seg_out, edge_out
 
 
-class FFM_ablation(nn.Module):
-    def __init__(self, in_channel, in_prior, up=True):
-        super(FFM_ablation, self).__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channel, in_prior, 3, 1, padding=1),
-            nn.BatchNorm2d(in_prior),
-            nn.ReLU(),
-            nn.Conv2d(in_prior, in_prior, 1, 1, padding=0),
-            nn.BatchNorm2d(in_prior),
-            nn.ReLU())
-        self.Up_to_2 = nn.Upsample(scale_factor=2)
-        self.up = up
-
-    def forward(self, x):
-        if self.up:
-            return self.conv(self.Up_to_2(x))
-        if not self.up:
-            return self.conv(x)
-
